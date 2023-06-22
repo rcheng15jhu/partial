@@ -32,7 +32,7 @@ A variant type that acts as the type of the key for the interpreter environment.
 This types augments values from the AST to include values with closures, like functions and records.
 
 #### `type presidual`
-A variant type that is part of the entry of the environment. The entry assigned to each identifier or line number is either a pvalue, the original clause body from the ast, or an expression to be inlined. Additional variants may be added as needed to signal different behavior of the partial evaluator.
+A variant type that is part of the entry of the environment. The entry assigned to each identifier or line number is either a pvalue (`PValue`), the original clause body from the ast (`PClause`), or an expression to be inlined (`PExpr`). Additional variants may be added as needed to signal different behavior of the partial evaluator.
 
 #### `type presidual_with_ident_lexadr_deps`
 This tuple type is the entry of the environment. The first entry is the identifier being assigned to, the second entry is a presidual, and the last entry is a set of lexical addresses that represent that lines previous dependencies (i.e., if the line remains in the residual program, which previous lines are in the def/use chain, and are required to also remain?)
@@ -70,4 +70,22 @@ This function performs partial evaluation on an expression, returning an expr an
 
 
 ## Additional Comments for future work
+
+### Improved inlining behavior for more const prop
+
+Currently, having an environment entry be a `PExpr` doesn’t allow the "result" (or end line) of that `PExpr` to be propagated further, as the nature of the last line (potentially a function or record definition, or even a literal value) is not readily available from the containing environment. In other words, return values from functions and conditionals currently do not const-prop forward. The case where a function or conditional returns a integer or boolean is easier to handle, as that can be more easily detected and special cased to return a `PValue` instead of a `PExpr`. However, when a function or conditional returns a closure value, it may have to inline additional variables that need to be "closed over", which makes enabling const prop more difficult. Currently, the only way to return multiple lines from a function or conditional is with `PExpr`.
+
+On possible solution is to create a new presidual variant to handle this, that doesn’t collapse to expr, but remains as some combination of envs. This may require a linked list of dependencies, or some way to specify these "sub-dependencies" as dependencies. (An even easier implementation is just to consider it all as one lexadr still, and let a dead code shake after take care of the rest. So, it may not require that set of dependency chains. Of course, if the result is ever re-parsed, dependencies can be established without chains)
+
+### Reduce work lost in function definitions and closures
+
+Currently, function closures contain the expr of the function body. Unfortunately, since we run a pass of partial evaluation on a function definition before creating a closure (to benefit from potential known values of captured variables), a lot of information and work done through that partial evaluation (all nested closures that are built, as well as accumulated dependency relationships) are all thrown away when converting back to an expr to be stored in a function closure. 
+
+Therefore, consider in the future storing function body as an env instead of an expr in closure, with some relationship with the captured variables env. This will require writing an additional partial evaluator to work with env bodies, instead of expr bodies. This would also fix the current issue of moving captured variables with closures themselves into function bodies, which is currently disallowed.
+
+### Deciding between inlining and (partially) bailing on function calls
+
+To better make the decision on when to peval & inline, peval part way and leave the call for the remaining dynamic parameters for runtime, or to bail entirely, it should be clear which parameters are indeed static or dynamic. Unfortunately, in the current implementation, dynamic variables either have an entry in the environment, as a non PValue, or instead do not have an entry in the environment at all (if it is an "initial parameter" of the program).
+
+To unify the two cases, I propose adding in placeholder entries in the latter case (with a new presidual variant), which would also make the change that any query from the environment that fails would be an immediate run-time error of the partial evaluator, just as in the normal interpreter case.
 
